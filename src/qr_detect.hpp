@@ -7,11 +7,14 @@ which is included as part of this source code package.
 
 #ifndef QR_DETECT_HPP
 #define QR_DETECT_HPP
+#if __has_include(<cv_bridge/cv_bridge.hpp>)
+#include <cv_bridge/cv_bridge.hpp>
+#else
 #include <cv_bridge/cv_bridge.h>
-#include <image_geometry/pinhole_camera_model.h>
-#include <message_filters/subscriber.h>
-#include <message_filters/time_synchronizer.h>
-#include <ros/ros.h>
+#endif
+#include <image_geometry/pinhole_camera_model.hpp>
+#include <message_filters/subscriber.hpp>
+#include <rclcpp/rclcpp.hpp>
 #include <opencv2/aruco.hpp>
 #include "common_lib.h"
 
@@ -24,12 +27,12 @@ class QRDetect
     cv::Ptr<cv::aruco::Dictionary> dictionary_;
   
   public:
-    ros::Publisher qr_pub_;
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr qr_pub_;
     cv::Mat imageCopy_;
     cv::Mat cameraMatrix_;
     cv::Mat distCoeffs_;
 
-    QRDetect(ros::NodeHandle &nh, Params& params) 
+    QRDetect(std::shared_ptr<rclcpp::Node> &nh, Params& params) 
     {
       marker_size_ = params.marker_size;
       delta_width_qr_center_ = params.delta_width_qr_center;
@@ -45,11 +48,11 @@ class QRDetect
                                                 
       // Initialize distortion coefficients
       distCoeffs_ = (cv::Mat_<float>(1, 5) << params.k1, params.k2, params.p1, params.p2, 0);
-
+      
       // Initialize QR dictionary
       dictionary_ = cv::aruco::getPredefinedDictionary(cv::aruco::DICT_6X6_250);
 
-      qr_pub_ = nh.advertise<sensor_msgs::PointCloud2>("qr_cloud", 1);
+      qr_pub_ = nh->create_publisher<sensor_msgs::msg::PointCloud2>("qr_cloud", 1);
     }
 
     Point2f projectPointDist(cv::Point3f pt_cv, const Mat intrinsics, const Mat distCoeffs) 
@@ -187,7 +190,7 @@ class QRDetect
           double y = tvecs[i][1];
           double z = tvecs[i][2];
 
-          cv::aruco::drawAxis(imageCopy_, cameraMatrix_, distCoeffs_, rvecs[i],
+          cv::drawFrameAxes(imageCopy_, cameraMatrix_, distCoeffs_, rvecs[i],
                               tvecs[i], 0.1);
 
           // Accumulate pose for initial guess
@@ -227,7 +230,7 @@ class QRDetect
 
         // cout << "board: " <<  tvec[0] << ", "<< tvec[1] << ", " << tvec[2] << std::endl;
 
-        cv::aruco::drawAxis(imageCopy_, cameraMatrix_, distCoeffs_, rvec, tvec, 0.2);
+        cv::drawFrameAxes(imageCopy_, cameraMatrix_, distCoeffs_, rvec, tvec, 0.2);
 
         // Build transformation matrix to calibration target axis
         cv::Mat R(3, 3, cv::DataType<float>::type);
@@ -317,7 +320,11 @@ class QRDetect
         {
           if (best_candidate_score == 1 && groups_scores[i] == 1) {
             // Exit 4: Several candidates fit target's geometry
-            ROS_ERROR(
+            // Note: logging might need a node pointer if used outside constructor, 
+            // but for now I'll assume we can use a global or pass it.
+            // Actually, I'll need to pass the node pointer or use a static logger.
+            // For simplicity, I'll use rclcpp::get_logger("qr_detect")
+            RCLCPP_ERROR(rclcpp::get_logger("qr_detect"),
                 "[Mono] More than one set of candidates fit target's geometry. "
                 "Please, make sure your parameters are well set. Exiting callback");
             return;
@@ -331,7 +338,7 @@ class QRDetect
         if (best_candidate_idx == -1) 
         {
           // Exit: No candidates fit target's geometry
-          ROS_WARN(
+          RCLCPP_WARN(rclcpp::get_logger("qr_detect"),
               "[Mono] Unable to find a candidate set that matches target's "
               "geometry");
           return;
@@ -357,7 +364,7 @@ class QRDetect
       else 
       {
         // Markers found != TARGET_NUM_CIRCLES
-        ROS_WARN("%lu marker(s) found, %d expected. Skipping frame...", ids.size(),
+        RCLCPP_WARN(rclcpp::get_logger("qr_detect"), "%lu marker(s) found, %d expected. Skipping frame...", ids.size(),
                 TARGET_NUM_CIRCLES);
       }
     }
